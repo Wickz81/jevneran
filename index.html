@@ -36,9 +36,6 @@ body {
   user-select: none;
   -webkit-user-drag: none;
   will-change: transform;
-  image-rendering: crisp-edges;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
 }
 
 #canvas {
@@ -46,7 +43,6 @@ body {
   top: 0;
   left: 0;
   cursor: crosshair;
-  image-rendering: crisp-edges;
 }
 
 #loading {
@@ -94,7 +90,6 @@ body {
   font-size: 12px;
   backdrop-filter: blur(4px);
   line-height: 1.6;
-  pointer-events: none;
 }
 
 #info span {
@@ -118,7 +113,6 @@ body {
   font-size: 11px;
   backdrop-filter: blur(4px);
   transition: opacity 0.5s ease;
-  pointer-events: none;
 }
 
 #quality-badge.hd {
@@ -159,15 +153,16 @@ const FULL_URL  = R2_BASE_URL + '/mapa-full.webp';
 const IMAGE_SIZE = 8192;
 const METERS_PER_PIXEL = 1;
 
-const GRID_1KM  = 1024;
-const GRID_100M = 102.4;
+// Grade
+const GRID_1KM  = 1024;    // 1km = 1024px
+const GRID_100M = 102.4;   // 100m = 102.4px
 
 /* ===============================
    ELEMENTOS
 ================================ */
 const map            = document.getElementById('map');
 const canvas         = document.getElementById('canvas');
-const ctx            = canvas.getContext('2d', { alpha: false });
+const ctx            = canvas.getContext('2d');
 const loadingEl      = document.getElementById('loading');
 const loadingTextEl  = document.getElementById('loadingText');
 const zoomLevelEl    = document.getElementById('zoomLevel');
@@ -193,10 +188,9 @@ let mouseWorld = null;
 
 let mapReady    = false;
 let needsRedraw = false;
-let lastRedrawTime = 0;
 
 /* ===============================
-   THROTTLE REDRAW
+   RENDER LOOP
 ================================ */
 function scheduleRedraw() {
   if (!needsRedraw) {
@@ -214,17 +208,15 @@ function doRedraw() {
   needsRedraw = false;
   if (!mapReady) return;
 
-  const now = performance.now();
-  lastRedrawTime = now;
-
   map.style.transform = `translate3d(${offsetX}px, ${offsetY}px, 0) scale(${scale})`;
 
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#0a0a0a';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  // --- GRADE ---
   drawGrid();
 
+  // --- MEDIÇÃO ---
   let endPoint = pointB;
   if (pointA && !pointB && mouseWorld) {
     endPoint = mouseWorld;
@@ -296,20 +288,23 @@ function doRedraw() {
 }
 
 /* ===============================
-   GRADE DO MAPA (OTIMIZADA)
+   GRADE DO MAPA
 ================================ */
 function drawGrid() {
   const screenW = canvas.width;
   const screenH = canvas.height;
 
+  // Limites visíveis em coordenadas world
   const worldLeft   = Math.max(0, (0 - offsetX) / scale);
   const worldTop    = Math.max(0, (0 - offsetY) / scale);
   const worldRight  = Math.min(IMAGE_SIZE, (screenW - offsetX) / scale);
   const worldBottom = Math.min(IMAGE_SIZE, (screenH - offsetY) / scale);
 
-  // Linhas de 100m (só se zoom > 25%)
+  // --- Linhas de 100m (só se zoom > 25%) ---
   if (scale > 0.25) {
+    // Opacidade cresce suavemente conforme o zoom aumenta
     const opacity = Math.min(0.8, (scale - 0.25) * 1.2);
+
     ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
     ctx.lineWidth   = 1;
 
@@ -318,6 +313,7 @@ function drawGrid() {
 
     ctx.beginPath();
     for (let wx = startX; wx <= worldRight; wx += GRID_100M) {
+      // Pula as linhas de 1km (serão desenhadas depois, mais grossas)
       if (Math.abs(wx % GRID_1KM) < 1) continue;
       const sx = wx * scale + offsetX;
       ctx.moveTo(sx, Math.max(0, worldTop * scale + offsetY));
@@ -332,7 +328,7 @@ function drawGrid() {
     ctx.stroke();
   }
 
-  // Linhas de 1km
+  // --- Linhas de 1km (sempre visíveis) ---
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
   ctx.lineWidth   = 1;
 
@@ -401,6 +397,7 @@ function init() {
     };
 
     full.onerror = () => {
+      document.querySelector('#loading .spinner').style.display = 'none';
       loadProgressEl.textContent = '';
       loadingTextEl.textContent = 'Erro ao carregar o mapa.';
     };
@@ -444,7 +441,7 @@ window.addEventListener('resize', () => {
 });
 
 /* ===============================
-   VISIBILIDADE
+   ABA VOLTOU AO FOCO
 ================================ */
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && mapReady) {
@@ -454,17 +451,12 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* ===============================
-   ZOOM (COM THROTTLE)
+   ZOOM
 ================================ */
-let lastWheelTime = 0;
 window.addEventListener('wheel', (e) => {
   if (!mapReady) return;
   e.preventDefault();
   if (isDragging) return;
-
-  const now = performance.now();
-  if (now - lastWheelTime < 16) return; // ~60fps
-  lastWheelTime = now;
 
   const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
   const newScale = Math.max(0.05, Math.min(scale * zoomFactor, 10));
@@ -498,13 +490,8 @@ canvas.addEventListener('mousedown', (e) => {
   dragStartY  = e.clientY - offsetY;
 });
 
-let lastMoveTime = 0;
 window.addEventListener('mousemove', (e) => {
   if (!mapReady) return;
-
-  const now = performance.now();
-  if (now - lastMoveTime < 16) return; // ~60fps
-  lastMoveTime = now;
 
   const rect = canvas.getBoundingClientRect();
   mouseWorld = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
@@ -578,7 +565,7 @@ canvas.addEventListener('click', (e) => {
 });
 
 /* ===============================
-   BOTÃO DIREITO
+   BOTÃO DIREITO — CANCELA
 ================================ */
 canvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
@@ -613,7 +600,7 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 /* ===============================
-   INIT
+   START
 ================================ */
 init();
 </script>
