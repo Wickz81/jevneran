@@ -118,6 +118,37 @@ body {
 #quality-badge.hd {
   color: #4ade80;
 }
+
+#error-box {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(239, 68, 68, 0.95);
+  color: white;
+  padding: 20px;
+  border-radius: 8px;
+  z-index: 200;
+  max-width: 500px;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  max-height: 400px;
+  overflow-y: auto;
+  display: none;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+#error-box h2 {
+  font-size: 16px;
+  margin-bottom: 10px;
+  color: #fecaca;
+}
+
+#error-box p {
+  margin: 5px 0;
+  word-break: break-all;
+}
 </style>
 </head>
 
@@ -127,6 +158,11 @@ body {
   <div class="spinner"></div>
   <div id="loadingText">Carregando mapa...</div>
   <div class="progress" id="loadProgress"></div>
+</div>
+
+<div id="error-box">
+  <h2>❌ Erro ao carregar</h2>
+  <div id="error-message"></div>
 </div>
 
 <div id="info">
@@ -143,19 +179,52 @@ body {
 
 <script>
 /* ===============================
+   DEBUG LOG
+================================ */
+const errorBox = document.getElementById('error-box');
+const errorMessage = document.getElementById('error-message');
+const logs = [];
+
+function addLog(message) {
+  console.log('🔍 DEBUG:', message);
+  logs.push(message);
+  console.log('Total logs:', logs.length);
+}
+
+function showError(title, message) {
+  console.error('❌ ERRO:', title, message);
+  errorMessage.innerHTML = `<p><strong>${title}</strong></p><p>${message}</p><p style="margin-top: 10px; color: #bfdbfe;">Logs:</p><p>${logs.join('<br>')}</p>`;
+  errorBox.style.display = 'block';
+}
+
+// Captura erros globais
+window.addEventListener('error', (e) => {
+  showError('Erro JavaScript', e.message + ' at ' + e.filename + ':' + e.lineno);
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  showError('Promise Rejeitada', e.reason);
+});
+
+/* ===============================
    CONFIGURAÇÃO
 ================================ */
-const R2_BASE_URL = 'https://pub-452ed59ef1474943a9adc7210b50aa97.r2.dev';
+addLog('Iniciando aplicação...');
 
+const R2_BASE_URL = 'https://pub-452ed59ef1474943a9adc7210b50aa97.r2.dev';
 const THUMB_URL = R2_BASE_URL + '/mapa-thumb.webp';
 const FULL_URL  = R2_BASE_URL + '/mapa-full.webp';
+
+addLog('R2_BASE_URL: ' + R2_BASE_URL);
+addLog('THUMB_URL: ' + THUMB_URL);
+addLog('FULL_URL: ' + FULL_URL);
 
 const IMAGE_SIZE = 8192;
 const METERS_PER_PIXEL = 1;
 
 // Grade
-const GRID_1KM  = 1024;    // 1km = 1024px
-const GRID_100M = 102.4;   // 100m = 102.4px
+const GRID_1KM  = 1024;
+const GRID_100M = 102.4;
 
 /* ===============================
    ELEMENTOS
@@ -169,6 +238,8 @@ const zoomLevelEl    = document.getElementById('zoomLevel');
 const hintEl         = document.getElementById('hint');
 const loadProgressEl = document.getElementById('loadProgress');
 const qualityBadge   = document.getElementById('quality-badge');
+
+addLog('Elementos DOM carregados');
 
 /* ===============================
    ESTADO
@@ -213,10 +284,8 @@ function doRedraw() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // --- GRADE ---
   drawGrid();
 
-  // --- MEDIÇÃO ---
   let endPoint = pointB;
   if (pointA && !pointB && mouseWorld) {
     endPoint = mouseWorld;
@@ -294,15 +363,12 @@ function drawGrid() {
   const screenW = canvas.width;
   const screenH = canvas.height;
 
-  // Limites visíveis em coordenadas world
   const worldLeft   = Math.max(0, (0 - offsetX) / scale);
   const worldTop    = Math.max(0, (0 - offsetY) / scale);
   const worldRight  = Math.min(IMAGE_SIZE, (screenW - offsetX) / scale);
   const worldBottom = Math.min(IMAGE_SIZE, (screenH - offsetY) / scale);
 
-  // --- Linhas de 100m (só se zoom > 25%) ---
   if (scale > 0.25) {
-    // Opacidade cresce suavemente conforme o zoom aumenta
     const opacity = Math.min(0.8, (scale - 0.25) * 1.2);
 
     ctx.strokeStyle = `rgba(255, 255, 255, ${opacity})`;
@@ -313,7 +379,6 @@ function drawGrid() {
 
     ctx.beginPath();
     for (let wx = startX; wx <= worldRight; wx += GRID_100M) {
-      // Pula as linhas de 1km (serão desenhadas depois, mais grossas)
       if (Math.abs(wx % GRID_1KM) < 1) continue;
       const sx = wx * scale + offsetX;
       ctx.moveTo(sx, Math.max(0, worldTop * scale + offsetY));
@@ -328,7 +393,6 @@ function drawGrid() {
     ctx.stroke();
   }
 
-  // --- Linhas de 1km (sempre visíveis) ---
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
   ctx.lineWidth   = 1;
 
@@ -353,13 +417,14 @@ function drawGrid() {
    CARREGAMENTO PROGRESSIVO
 ================================ */
 function init() {
+  addLog('Iniciando carregamento de imagens');
   loadProgressEl.textContent = 'Carregando prévia...';
 
   const thumb = new Image();
   thumb.crossOrigin = 'anonymous';
-  thumb.src = THUMB_URL;
-
+  
   thumb.onload = () => {
+    addLog('✅ Thumbnail carregado com sucesso');
     map.src = thumb.src;
     startApp();
     qualityBadge.textContent = '📷 Prévia (baixa resolução)';
@@ -369,6 +434,7 @@ function init() {
     full.src = FULL_URL;
 
     full.onload = () => {
+      addLog('✅ Imagem full HD carregada com sucesso');
       map.src = full.src;
       qualityBadge.textContent = '✅ HD carregado';
       qualityBadge.classList.add('hd');
@@ -377,18 +443,21 @@ function init() {
     };
 
     full.onerror = () => {
+      addLog('❌ Erro ao carregar full HD');
       qualityBadge.textContent = '⚠️ HD indisponível';
       setTimeout(() => { qualityBadge.style.opacity = '0'; }, 5000);
     };
   };
 
   thumb.onerror = () => {
+    addLog('❌ Erro ao carregar thumbnail, tentando full...');
     loadProgressEl.textContent = 'Carregando imagem completa...';
     const full = new Image();
     full.crossOrigin = 'anonymous';
     full.src = FULL_URL;
 
     full.onload = () => {
+      addLog('✅ Imagem full carregada após falha do thumbnail');
       map.src = full.src;
       startApp();
       qualityBadge.textContent = '✅ HD carregado';
@@ -397,11 +466,18 @@ function init() {
     };
 
     full.onerror = () => {
+      addLog('❌ Erro ao carregar ambas as imagens!');
+      addLog('THUMB_URL: ' + THUMB_URL);
+      addLog('FULL_URL: ' + FULL_URL);
+      showError('Erro ao carregar imagens', 'Não foi possível carregar thumbnail nem full. Verifique as URLs e CORS.');
       document.querySelector('#loading .spinner').style.display = 'none';
       loadProgressEl.textContent = '';
       loadingTextEl.textContent = 'Erro ao carregar o mapa.';
     };
   };
+
+  addLog('Iniciando carregamento thumbnail: ' + THUMB_URL);
+  thumb.src = THUMB_URL;
 }
 
 /* ===============================
@@ -410,6 +486,7 @@ function init() {
 function startApp() {
   if (mapReady) return;
   mapReady = true;
+  addLog('App iniciado - mapa pronto!');
 
   loadingEl.style.display = 'none';
   fitMapToScreen();
@@ -429,6 +506,7 @@ function fitMapToScreen() {
   offsetX = (screenW - IMAGE_SIZE * scale) / 2;
   offsetY = (screenH - IMAGE_SIZE * scale) / 2;
   zoomLevelEl.textContent = Math.round(scale * 100) + '%';
+  addLog('Mapa ajustado à tela: scale=' + scale.toFixed(2));
 }
 
 /* ===============================
@@ -602,6 +680,7 @@ function roundRect(ctx, x, y, w, h, r) {
 /* ===============================
    START
 ================================ */
+addLog('Página carregada - iniciando...');
 init();
 </script>
 
